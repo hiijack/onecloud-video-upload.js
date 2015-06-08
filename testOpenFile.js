@@ -1,5 +1,5 @@
-// slice the file into pieces, and calculate the file md5
-// todo : calculate the file piece's md5
+// slice the file into pieces, and calculate the file md5, and calculate the file piece's md5
+//
 
 var crypto = require('crypto');
 var fs = require('fs');
@@ -11,31 +11,31 @@ var ep = new EventProxy();
 var path = '/home/jack/Downloads/node-v0.12.2-linux-x86.tar.gz';
 // 1 MB
 var size = 1024 * 1024 * 1;
-//var buffer = new Buffer(size);
 
+var fileDigest = {
+    md5: '',
+    piece: []
+};
+
+// TODO change to async
 var stat = fs.statSync(path);
 var fileSize = stat['size'];
-var eventTime = parseInt(fileSize / size);
-
-if (fileSize % size != 0) {
-    eventTime++;
-}
+var eventTime = Math.ceil(fileSize / size);
 
 ep.on('fileReadEnd', function() {
     var d = md5.digest('hex');
-    console.log(d);
+    fileDigest.md5 = d;
+    console.log(fileDigest);
 });
 
 var i = 1;
 ep.on('fileRead', function(param) {
-    //console.log('file read');
     read(param.fd, i * size);
 });
 
 function read(fd, position) {
     if (position + size > fileSize) {
-        size = fileSize - (position);
-        //console.log(size);
+        size = fileSize - position;
     }
     var buffer = new Buffer(size);
     fs.read(fd, buffer, 0, size, position, function(err, bytes, buffer) {
@@ -47,24 +47,20 @@ function read(fd, position) {
             buffer: buffer
         };
 
-        //console.log(i + ', ' + position);
         md5.update(buffer);
+        fileDigest.piece.push(crypto.createHash('md5').update(buffer).digest('hex'));
         if (i < eventTime) {
             ep.emit('fileRead', param);
-        }
-        else {
+        } else {
             ep.emit('fileReadEnd');
         }
-
         i++;
     });
 }
 
-function callback(err, fd) {
+fs.open(path, 'r', function(err, fd) {
     if (err) {
         throw err;
     }
     read(fd, 0);
-}
-
-fs.open(path, 'r', callback);
+});
