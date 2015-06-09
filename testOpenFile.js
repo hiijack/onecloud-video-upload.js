@@ -1,66 +1,81 @@
 // slice the file into pieces, and calculate the file md5, and calculate the file piece's md5
+// async
 //
 
 var crypto = require('crypto');
 var fs = require('fs');
 var EventProxy = require('eventproxy');
-
-var md5 = crypto.createHash('md5');
-
 var ep = new EventProxy();
-var path = '/home/jack/Downloads/node-v0.12.2-linux-x86.tar.gz';
-// 1 MB
-var size = 1024 * 1024 * 1;
 
-var fileDigest = {
-    md5: '',
-    piece: []
+// 1MB
+var chunkSize = 1024 * 1024 * 1;
+
+var startRead = function(fd, fileSize) {
+
+    var md5 = crypto.createHash('md5');
+
+    var currentChunk = 1;
+    var totalChunk = Math.ceil(fileSize / chunkSize);
+    var chunkDigest = [];
+    //console.log(totalChunk);
+
+    var read = function(fd, currChunk) {
+        var position = (currChunk - 1) * chunkSize;
+        if (position + chunkSize > fileSize) {
+            chunkSize = fileSize - position;
+        }
+        //console.log(currChunk, position);
+
+        var buffer = new Buffer(chunkSize);
+        fs.read(fd, buffer, 0, chunkSize, position, function(err, bytes, buffer) {
+            if (err) {
+                throw err;
+            }
+            var param = {
+                fd: fd,
+                buffer: buffer
+            };
+
+            md5.update(buffer);
+            chunkDigest.push(crypto.createHash('md5').update(buffer).digest('hex'));
+            if (currChunk < totalChunk) {
+                currentChunk++;
+                ep.emit('nextChunk', param);
+            } else {
+                ep.emit('fileReadEnd', {
+                    md5: md5.digest('hex'),
+                    chunkDigest: chunkDigest
+                });
+            }
+        });
+    };
+
+    ep.on('nextChunk', function(param) {
+        read(param.fd, currentChunk);
+    });
+
+    read(fd, currentChunk);
 };
 
-// TODO change to async
-var stat = fs.statSync(path);
-var fileSize = stat['size'];
-var eventTime = Math.ceil(fileSize / size);
+module.exports = function(path, callback) {
 
-ep.on('fileReadEnd', function() {
-    var d = md5.digest('hex');
-    fileDigest.md5 = d;
-    console.log(fileDigest);
-});
-
-var i = 1;
-ep.on('fileRead', function(param) {
-    read(param.fd, i * size);
-});
-
-function read(fd, position) {
-    if (position + size > fileSize) {
-        size = fileSize - position;
-    }
-    var buffer = new Buffer(size);
-    fs.read(fd, buffer, 0, size, position, function(err, bytes, buffer) {
+    fs.stat(path, function(err, stat) {
         if (err) {
             throw err;
         }
-        var param = {
-            fd: fd,
-            buffer: buffer
-        };
 
-        md5.update(buffer);
-        fileDigest.piece.push(crypto.createHash('md5').update(buffer).digest('hex'));
-        if (i < eventTime) {
-            ep.emit('fileRead', param);
-        } else {
-            ep.emit('fileReadEnd');
-        }
-        i++;
+        fs.open(path, 'r', function(err, fd) {
+            if (err) {
+                throw err;
+            }
+            startRead(fd, stat['size'], callback);
+        });
     });
-}
 
-fs.open(path, 'r', function(err, fd) {
-    if (err) {
-        throw err;
-    }
-    read(fd, 0);
-});
+    ep.on('fileReadEnd', function(digestInfo) {
+        //console.log(digestInfo);
+        if (callback) {
+            callback(digestInfo);
+        }
+    });
+};
