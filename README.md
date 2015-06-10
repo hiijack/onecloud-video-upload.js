@@ -1,5 +1,5 @@
 # onecloud-video-upload.js
-A component use to upload video to onecloud continually
+A Node component use to upload video to onecloud video platform continually.
 
 # Design
 1. 模块化。
